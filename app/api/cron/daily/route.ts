@@ -937,12 +937,16 @@ async function syncSmartlead(
       .filter((id): id is number => typeof id === "number");
 
     if (activeExternalIds.length > 0) {
-      const { data: dbAccounts } = await supabase
-        .from("email_accounts")
-        .select("id, external_id")
-        .eq("integration_id", integration.id);
+      const dbAccounts = await loadAllDbRows<{ id: string; external_id: number | string | null }>((from, to) =>
+        supabase
+          .from("email_accounts")
+          .select("id, external_id")
+          .eq("integration_id", integration.id)
+          .order("id", { ascending: true })
+          .range(from, to)
+      );
 
-      if (dbAccounts && dbAccounts.length > 0) {
+      if (dbAccounts.length > 0) {
         const activeSet = new Set(activeExternalIds);
         const toDeleteIds = dbAccounts
           .filter((acc) => acc.external_id !== null && !activeSet.has(Number(acc.external_id)))
@@ -1563,12 +1567,16 @@ async function syncEmailGuard(
      */
     const activeDomains = domainRows.map((r: any) => String(r.domain).toLowerCase());
     if (activeDomains.length > 0) {
-      const { data: dbDomains } = await supabase
-        .from("domains")
-        .select("id, domain")
-        .eq("integration_id", integration.id);
+      const dbDomains = await loadAllDbRows<{ id: string; domain: string | null }>((from, to) =>
+        supabase
+          .from("domains")
+          .select("id, domain")
+          .eq("integration_id", integration.id)
+          .order("id", { ascending: true })
+          .range(from, to)
+      );
 
-      if (dbDomains && dbDomains.length > 0) {
+      if (dbDomains.length > 0) {
         const activeDomainSet = new Set(activeDomains);
         const toDeleteDomainIds = dbDomains
           .filter((d) => d.domain && !activeDomainSet.has(d.domain.toLowerCase()))
@@ -2583,6 +2591,41 @@ function hasClientName(
       raw.clientName
     )
   );
+}
+
+async function loadAllDbRows<T>(
+  fetchPage: (from: number, to: number) => PromiseLike<{ data: any; error: any }>
+): Promise<T[]> {
+  const rows: T[] = [];
+  const PAGE_SIZE = 1000;
+  let from = 0;
+
+  while (true) {
+    const to = from + PAGE_SIZE - 1;
+    const { data, error } = await fetchPage(from, to);
+
+    if (error) {
+      throw new Error(error.message);
+    }
+
+    if (!data || data.length === 0) {
+      break;
+    }
+
+    rows.push(...(data as T[]));
+
+    if (data.length < PAGE_SIZE) {
+      break;
+    }
+
+    from += PAGE_SIZE;
+
+    if (from > 100000) {
+      break;
+    }
+  }
+
+  return rows;
 }
 
 
