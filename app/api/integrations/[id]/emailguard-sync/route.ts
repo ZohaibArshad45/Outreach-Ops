@@ -219,6 +219,32 @@ export async function POST(
           `Domain save failed: ${upsertError.message}`
         );
       }
+
+      /*
+       * Prune domains that no longer exist in EmailGuard for this integration
+       */
+      const activeDomains = rows.map((r: any) => String(r.domain).toLowerCase());
+      if (activeDomains.length > 0) {
+        const { data: dbDomains } = await supabase
+          .from("domains")
+          .select("id, domain")
+          .eq("integration_id", integrationId);
+
+        if (dbDomains && dbDomains.length > 0) {
+          const activeDomainSet = new Set(activeDomains);
+          const toDeleteDomainIds = dbDomains
+            .filter((d) => d.domain && !activeDomainSet.has(d.domain.toLowerCase()))
+            .map((d) => d.id);
+
+          if (toDeleteDomainIds.length > 0) {
+            const deleteChunkSize = 200;
+            for (let i = 0; i < toDeleteDomainIds.length; i += deleteChunkSize) {
+              const chunk = toDeleteDomainIds.slice(i, i + deleteChunkSize);
+              await supabase.from("domains").delete().in("id", chunk);
+            }
+          }
+        }
+      }
     }
 
     const {

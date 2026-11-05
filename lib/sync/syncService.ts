@@ -287,6 +287,35 @@ export async function syncSmartleadIntegration(integration: {
         throw new Error(`Email account save failed: ${error.message}`);
       }
     }
+
+    // Prune email accounts that no longer exist in Smartlead for this integration
+    const activeExternalIds = accountRows
+      .map((r) => r.external_id)
+      .filter((id): id is number => typeof id === "number");
+
+    if (activeExternalIds.length > 0) {
+      const { data: dbAccounts } = await supabase
+        .from("email_accounts")
+        .select("id, external_id")
+        .eq("integration_id", integration.id);
+
+      if (dbAccounts && dbAccounts.length > 0) {
+        const activeSet = new Set(activeExternalIds);
+        const toDeleteIds = dbAccounts
+          .filter((acc) => acc.external_id !== null && !activeSet.has(Number(acc.external_id)))
+          .map((acc) => acc.id);
+
+        if (toDeleteIds.length > 0) {
+          const deleteChunkSize = 200;
+          for (let i = 0; i < toDeleteIds.length; i += deleteChunkSize) {
+            const chunk = toDeleteIds.slice(i, i + deleteChunkSize);
+            // Also clean up any open issues for these deleted accounts
+            await supabase.from("issues").delete().in("email_account_id", chunk);
+            await supabase.from("email_accounts").delete().in("id", chunk);
+          }
+        }
+      }
+    }
   }
 
   // 2. Process campaigns (if returned)
@@ -451,6 +480,30 @@ export async function syncEmailguardIntegration(integration: {
 
       if (error) {
         throw new Error(`Domain save failed: ${error.message}`);
+      }
+    }
+
+    // Prune domains that no longer exist in EmailGuard for this integration
+    const activeDomains = domainRows.map((r: any) => r.domain.toLowerCase());
+    if (activeDomains.length > 0) {
+      const { data: dbDomains } = await supabase
+        .from("domains")
+        .select("id, domain")
+        .eq("integration_id", integration.id);
+
+      if (dbDomains && dbDomains.length > 0) {
+        const activeDomainSet = new Set(activeDomains);
+        const toDeleteDomainIds = dbDomains
+          .filter((d) => d.domain && !activeDomainSet.has(d.domain.toLowerCase()))
+          .map((d) => d.id);
+
+        if (toDeleteDomainIds.length > 0) {
+          const deleteChunkSize = 200;
+          for (let i = 0; i < toDeleteDomainIds.length; i += deleteChunkSize) {
+            const chunk = toDeleteDomainIds.slice(i, i + deleteChunkSize);
+            await supabase.from("domains").delete().in("id", chunk);
+          }
+        }
       }
     }
   }

@@ -1756,6 +1756,36 @@ export async function POST(
 
       }
 
+      /*
+       * Prune email accounts that no longer exist in Smartlead for this integration
+       */
+      const activeExternalIds = accountRows
+        .map((r) => r.external_id)
+        .filter((id): id is number => typeof id === "number");
+
+      if (activeExternalIds.length > 0) {
+        const { data: dbAccounts } = await supabase
+          .from("email_accounts")
+          .select("id, external_id")
+          .eq("integration_id", integration.id);
+
+        if (dbAccounts && dbAccounts.length > 0) {
+          const activeSet = new Set(activeExternalIds);
+          const toDeleteIds = dbAccounts
+            .filter((acc) => acc.external_id !== null && !activeSet.has(Number(acc.external_id)))
+            .map((acc) => acc.id);
+
+          if (toDeleteIds.length > 0) {
+            const deleteChunkSize = 200;
+            for (let i = 0; i < toDeleteIds.length; i += deleteChunkSize) {
+              const chunk = toDeleteIds.slice(i, i + deleteChunkSize);
+              await supabase.from("issues").delete().in("email_account_id", chunk);
+              await supabase.from("email_accounts").delete().in("id", chunk);
+            }
+          }
+        }
+      }
+
     }
 
     /*
